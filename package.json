@@ -1,0 +1,25 @@
+{
+  "name": "fichaje-app-landing",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+  "dev": "concurrently \"node server.js\" \"vite\"",
+  "build": "vite build",
+  "start": "NODE_ENV=production node server.js",
+  "preview": "vite preview --port 5174"
+  },
+  "dependencies": {
+  "lenis": "^1.1.9",
+  "gsap": "^3.12.5",
+  "express": "^4.19.2",
+  "nodemailer": "^6.9.14"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.18",
+    "postcss": "^8.4.31",
+    "tailwindcss": "^3.4.10",
+  "vite": "^5.4.0",
+  "concurrently": "^8.2.2"
+  }
+}
