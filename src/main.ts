@@ -7,6 +7,21 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger'
 
 gsap.registerPlugin(ScrollTrigger)
 
+type Grecaptcha = {
+  render?: (...args: any[]) => number
+  reset(widgetId?: number): void
+  getResponse(widgetId?: number): string
+  ready?: (callback: () => void) => void
+}
+
+declare global {
+  interface Window {
+    grecaptcha?: Grecaptcha
+  }
+}
+
+const RECAPTCHA_SITE_KEY = import.meta.env.VITE_RECAPTCHA_SITE_KEY ?? '6Lf72uErAAAAAOenjNz2PjqHX0Y5y49SWiUbsufK'
+
 const app = document.getElementById('app')!
 app.innerHTML = `
   <header class="fixed top-0 left-0 right-0 z-[100] border-b border-white/10 bg-background/70 backdrop-blur-xl">
@@ -517,6 +532,9 @@ app.innerHTML = `
               <textarea name="notes" rows="3" placeholder="Volumen de empleados, necesidades especiales o fechas de implantación"></textarea>
             </label>
           </div>
+          <div class="demo-captcha">
+            <div class="g-recaptcha" data-sitekey="${RECAPTCHA_SITE_KEY}" data-theme="dark"></div>
+          </div>
           <p class="demo-hint">Al enviar generamos una empresa demo válida durante 30 días. Te enviaremos el acceso y un recordatorio antes de la desactivación automática.</p>
           <div class="demo-alert demo-alert--success" id="demo-success" role="status" aria-live="polite"></div>
           <div class="demo-alert demo-alert--error" id="demo-error" role="alert" aria-live="assertive"></div>
@@ -923,6 +941,11 @@ extra.innerHTML = `
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1.3rem 1.2rem;
   }
+  .demo-captcha {
+    display: flex;
+    justify-content: center;
+    padding: 0.5rem 0 1.2rem;
+  }
   .demo-field {
     display: grid;
     gap: 0.6rem;
@@ -1326,6 +1349,7 @@ const toggleDemoModal = (open: boolean) => {
   if (open) {
     resetDemoAlerts()
     demoForm?.reset()
+    window.grecaptcha?.reset()
     demoSubmit && (demoSubmit.disabled = false)
     if (demoSubmit) demoSubmit.textContent = 'Crear demo'
     demoSubmit?.removeAttribute('aria-busy')
@@ -1360,6 +1384,7 @@ demoForm?.addEventListener('submit', async event => {
   event.preventDefault()
   if (!demoSubmit) return
 
+  const captcha = window.grecaptcha
   const originalLabel = demoSubmit.textContent || 'Crear demo'
   demoSubmit.disabled = true
   demoSubmit.textContent = 'Creando demo…'
@@ -1389,11 +1414,31 @@ demoForm?.addEventListener('submit', async event => {
     return
   }
 
+  if (!captcha || typeof captcha.getResponse !== 'function') {
+    showDemoMessage('error', 'El captcha no se ha cargado. Recarga la página e inténtalo de nuevo.')
+    demoSubmit.disabled = false
+    demoSubmit.textContent = originalLabel
+    demoSubmit.removeAttribute('aria-busy')
+    return
+  }
+
+  const captchaToken = captcha.getResponse()
+
+  if (!captchaToken) {
+    showDemoMessage('error', 'Confirma que no eres un robot antes de continuar.')
+    demoSubmit.disabled = false
+    demoSubmit.textContent = originalLabel
+    demoSubmit.removeAttribute('aria-busy')
+    return
+  }
+
+  const payloadWithCaptcha = { ...payload, captchaToken }
+
   try {
     const response = await fetch(DEMO_API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(payloadWithCaptcha),
     })
 
     if (!response.ok) {
@@ -1413,6 +1458,7 @@ demoForm?.addEventListener('submit', async event => {
     demoSubmit.disabled = false
     demoSubmit.textContent = originalLabel
     demoSubmit.removeAttribute('aria-busy')
+    captcha.reset()
   }
 })
 
