@@ -9,9 +9,10 @@ gsap.registerPlugin(ScrollTrigger)
 
 type Grecaptcha = {
   render?: (...args: any[]) => number
-  reset(widgetId?: number): void
-  getResponse(widgetId?: number): string
+  reset?: (widgetId?: number) => void
+  getResponse?: (widgetId?: number) => string
   ready?: (callback: () => void) => void
+  execute?: (siteKey: string, options?: { action?: string }) => Promise<string>
 }
 
 declare global {
@@ -21,6 +22,75 @@ declare global {
 }
 
 const RECAPTCHA_SITE_KEY = import.meta.env.VITE_RECAPTCHA_SITE_KEY ?? '6Lf72uErAAAAAOenjNz2PjqHX0Y5y49SWiUbsufK'
+const RECAPTCHA_ACTION = 'demo_modal_submit'
+
+let recaptchaReadyPromise: Promise<void> | null = null
+
+const ensureRecaptchaReady = async () => {
+  if (!RECAPTCHA_SITE_KEY) {
+    throw new Error('Falta la clave pública de reCAPTCHA.')
+  }
+
+  if (window.grecaptcha?.execute) {
+    if (window.grecaptcha.ready) {
+      await new Promise<void>(resolve => window.grecaptcha?.ready?.(resolve))
+    }
+    return
+  }
+
+  if (!recaptchaReadyPromise) {
+    recaptchaReadyPromise = new Promise<void>((resolve, reject) => {
+      const existingScript = document.querySelector<HTMLScriptElement>('script[data-recaptcha-script="v3"]')
+      if (existingScript) {
+        existingScript.addEventListener('load', () => resolve(), { once: true })
+        existingScript.addEventListener('error', () => {
+          recaptchaReadyPromise = null
+          reject(new Error('No se pudo cargar Google reCAPTCHA.'))
+        }, { once: true })
+        return
+      }
+
+      const script = document.createElement('script')
+      script.src = `https://www.google.com/recaptcha/api.js?render=${RECAPTCHA_SITE_KEY}`
+      script.async = true
+      script.defer = true
+      script.dataset.recaptchaScript = 'v3'
+      script.onload = () => {
+        if (window.grecaptcha?.ready) {
+          window.grecaptcha.ready(() => resolve())
+        } else {
+          resolve()
+        }
+      }
+      script.onerror = () => {
+        recaptchaReadyPromise = null
+        reject(new Error('No se pudo cargar Google reCAPTCHA.'))
+      }
+      document.head.appendChild(script)
+    })
+  }
+
+  await recaptchaReadyPromise
+}
+
+const executeRecaptcha = async () => {
+  await ensureRecaptchaReady()
+  const grecaptcha = window.grecaptcha
+  if (!grecaptcha?.execute) {
+    throw new Error('reCAPTCHA no está disponible en este momento.')
+  }
+
+  const token = await grecaptcha.execute(RECAPTCHA_SITE_KEY, { action: RECAPTCHA_ACTION })
+  if (!token) {
+    throw new Error('No se pudo validar el captcha. Recarga la página e inténtalo de nuevo.')
+  }
+
+  return token
+}
+
+void ensureRecaptchaReady().catch(error => {
+  console.warn('No se pudo precargar reCAPTCHA', error)
+})
 
 const app = document.getElementById('app')!
 app.innerHTML = `
@@ -532,9 +602,6 @@ app.innerHTML = `
               <textarea name="notes" rows="3" placeholder="Volumen de empleados, necesidades especiales o fechas de implantación"></textarea>
             </label>
           </div>
-          <div class="demo-captcha">
-            <div class="g-recaptcha" data-sitekey="${RECAPTCHA_SITE_KEY}" data-theme="dark"></div>
-          </div>
           <p class="demo-hint">Al enviar generamos una empresa demo válida durante 30 días. Te enviaremos el acceso y un recordatorio antes de la desactivación automática.</p>
           <div class="demo-alert demo-alert--success" id="demo-success" role="status" aria-live="polite"></div>
           <div class="demo-alert demo-alert--error" id="demo-error" role="alert" aria-live="assertive"></div>
@@ -941,11 +1008,6 @@ extra.innerHTML = `
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 1.3rem 1.2rem;
   }
-  .demo-captcha {
-    display: flex;
-    justify-content: center;
-    padding: 0.5rem 0 1.2rem;
-  }
   .demo-field {
     display: grid;
     gap: 0.6rem;
@@ -1349,7 +1411,6 @@ const toggleDemoModal = (open: boolean) => {
   if (open) {
     resetDemoAlerts()
     demoForm?.reset()
-    window.grecaptcha?.reset()
     demoSubmit && (demoSubmit.disabled = false)
     if (demoSubmit) demoSubmit.textContent = 'Crear demo'
     demoSubmit?.removeAttribute('aria-busy')
@@ -1384,7 +1445,6 @@ demoForm?.addEventListener('submit', async event => {
   event.preventDefault()
   if (!demoSubmit) return
 
-  const captcha = window.grecaptcha
   const originalLabel = demoSubmit.textContent || 'Crear demo'
   demoSubmit.disabled = true
   demoSubmit.textContent = 'Creando demo…'
@@ -1414,18 +1474,13 @@ demoForm?.addEventListener('submit', async event => {
     return
   }
 
-  if (!captcha || typeof captcha.getResponse !== 'function') {
-    showDemoMessage('error', 'El captcha no se ha cargado. Recarga la página e inténtalo de nuevo.')
-    demoSubmit.disabled = false
-    demoSubmit.textContent = originalLabel
-    demoSubmit.removeAttribute('aria-busy')
-    return
-  }
-
-  const captchaToken = captcha.getResponse()
-
-  if (!captchaToken) {
-    showDemoMessage('error', 'Confirma que no eres un robot antes de continuar.')
+  let captchaToken: string
+  try {
+    captchaToken = await executeRecaptcha()
+  } catch (error) {
+    console.error('Captcha execution error', error)
+    const message = error instanceof Error ? error.message : 'No se pudo validar el captcha. Inténtalo de nuevo más tarde.'
+    showDemoMessage('error', message)
     demoSubmit.disabled = false
     demoSubmit.textContent = originalLabel
     demoSubmit.removeAttribute('aria-busy')
@@ -1458,7 +1513,6 @@ demoForm?.addEventListener('submit', async event => {
     demoSubmit.disabled = false
     demoSubmit.textContent = originalLabel
     demoSubmit.removeAttribute('aria-busy')
-    captcha.reset()
   }
 })
 
